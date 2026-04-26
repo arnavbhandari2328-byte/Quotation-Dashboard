@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quotify — Stainless Steel Quotation System</title>
+    <style>
+        /* (Your beautiful CSS remains exactly the same!) */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root { --primary: #2563EB; --primary-light: #EBF4FF; --primary-dark: #1D4ED8; --success: #16A34A; --success-light: #F0FDF4; --bg: #F8FAFC; --card: #FFFFFF; --error: #DC2626; --text: #1E293B; --text-secondary: #64748B; --border: #E5E7EB; --readonly-bg: #F3F4F6; }
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+        .app-container { max-width: 900px; margin: 0 auto; padding: 0 16px; padding-bottom: 32px; }
+        .header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 0 16px; position: sticky; top: 0; background: var(--bg); z-index: 100; }
+        .header-left h1 { font-size: 26px; font-weight: 800; color: var(--primary); letter-spacing: -0.5px; }
+        .header-left .subtitle { font-size: 13px; color: var(--text-secondary); font-weight: 400; margin-top: 2px; }
+        .header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+        .pending-badge { background: var(--primary); color: white; font-size: 13px; font-weight: 600; padding: 4px 14px; border-radius: 20px; white-space: nowrap; }
+        .reset-btn { background: #F1F5F9; border: 1px solid var(--border); color: var(--text-secondary); font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+        .reset-btn:hover { background: #E2E8F0; color: var(--text); }
+        .tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 20px; position: sticky; top: 72px; background: var(--bg); z-index: 99; }
+        .tab { padding: 12px 20px; font-size: 14px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; white-space: nowrap; user-select: none; }
+        .tab:hover { color: var(--primary); }
+        .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab .tab-count { background: var(--primary); color: white; font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+        .tab-content { display: none; animation: fadeIn 0.25s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .enquiry-card { background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04); padding: 18px 20px; margin-bottom: 14px; border-left: 4px solid var(--primary); transition: box-shadow 0.2s, transform 0.15s; }
+        .enquiry-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); transform: translateY(-1px); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .customer-name { font-size: 17px; font-weight: 700; color: var(--text); }
+        .time-ago { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+        .product-line { font-size: 14px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.5; }
+        .product-line .qty-badge { display: inline-block; background: #F1F5F9; padding: 2px 8px; border-radius: 4px; font-weight: 600; color: var(--text); font-size: 13px; margin-left: 4px; }
+        .view-quote-btn { background: var(--primary); color: white; border: none; padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.2s, transform 0.1s; min-height: 48px; display: inline-flex; align-items: center; gap: 6px; }
+        .view-quote-btn:hover { background: var(--primary-dark); }
+        .view-quote-btn:active { transform: scale(0.97); }
+        .sent-card { background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04); padding: 18px 20px; margin-bottom: 14px; border-left: 4px solid var(--success); transition: box-shadow 0.2s; }
+        .sent-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .sent-card .card-header { margin-bottom: 6px; }
+        .sent-card .sent-details { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
+        .sent-card .sent-details span { display: flex; align-items: center; gap: 4px; }
+        .sent-card .amount { font-size: 18px; font-weight: 700; color: var(--success); }
+        .sent-card .quote-no { font-size: 12px; color: var(--text-secondary); font-family: monospace; }
+        .view-sent-btn { background: var(--success-light); color: var(--success); border: 1px solid #BBF7D0; padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; min-height: 48px; }
+        .view-sent-btn:hover { background: #DCFCE7; }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+        .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state p { font-size: 15px; max-width: 320px; margin: 0 auto; }
+        .quote-form-view { display: none; animation: slideIn 0.3s ease; }
+        .quote-form-view.active { display: block; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .back-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--primary); font-size: 14px; font-weight: 600; cursor: pointer; padding: 8px 0; margin-bottom: 16px; transition: opacity 0.2s; }
+        .back-btn:hover { opacity: 0.7; }
+        .form-section { margin-bottom: 24px; }
+        .form-section-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+        .form-section-title .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .dot-blue { background: var(--primary); }
+        .dot-green { background: var(--success); }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        .form-field { display: flex; flex-direction: column; gap: 4px; }
+        .form-field.full-width { grid-column: 1 / -1; }
+        .form-field label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-field .readonly-input { background: var(--readonly-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 15px; color: var(--text); font-weight: 500; }
+        .form-field input[type="number"], .form-field input[type="text"], .form-field select, .form-field textarea { background: var(--primary-light); border: 2px solid var(--primary); border-radius: 8px; padding: 10px 14px; font-size: 15px; color: var(--text); font-weight: 500; font-family: inherit; outline: none; transition: box-shadow 0.2s; }
+        .form-field input:focus, .form-field select:focus, .form-field textarea:focus { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+        .calc-panel { background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 20px; margin-bottom: 24px; border: 1px solid var(--border); }
+        .calc-panel h3 { font-size: 14px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 14px; }
+        .calc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 15px; }
+        .calc-row.total { border-top: 2px solid var(--text); margin-top: 8px; padding-top: 14px; font-size: 20px; font-weight: 800; color: var(--primary); }
+        .calc-row .label { color: var(--text-secondary); }
+        .calc-row .value { font-weight: 600; color: var(--text); }
+        .calc-row.total .value { color: var(--primary); }
+        .generate-btn { width: 100%; min-height: 52px; background: var(--primary); color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .generate-btn:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
+        .history-table-wrapper { overflow-x: auto; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .history-table { width: 100%; border-collapse: collapse; background: var(--card); min-width: 700px; }
+        .history-table th { background: #F1F5F9; padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border); }
+        .history-table td { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: var(--text); }
+        .status-pill { display: inline-block; background: var(--success-light); color: var(--success); font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="header">
+        <div class="header-left">
+            <h1>Quotify</h1>
+            <div class="subtitle">Intelligent Quotation OS</div>
+        </div>
+        <div class="header-right">
+            <span class="pending-badge" id="pendingBadge">0 pending</span>
+            <button class="reset-btn" onclick="location.reload()">↻ Refresh</button>
+        </div>
+    </div>
+
+    <div class="tabs" id="tabsNav">
+        <div class="tab active" data-tab="pending" onclick="switchTab('pending')">
+            Pending <span class="tab-count" id="pendingTabCount">0</span>
+        </div>
+        <div class="tab" data-tab="history" onclick="switchTab('history')">
+            History & Sent
+        </div>
+    </div>
+
+    <div class="tab-content active" id="tab-pending">
+        <div id="pendingList"></div>
+    </div>
+
+    <div class="tab-content" id="tab-history">
+        <div class="history-table-wrapper">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Customer</th>
+                        <th>Product</th>
+                        <th>Qty</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="historyBody"></tbody>
+            </table>
+        </div>
+        <div id="historyEmpty" class="empty-state" style="display:none;">
+            <div class="icon">📋</div>
+            <p>No past quotes found.</p>
+        </div>
+    </div>
+
+    <div class="quote-form-view" id="quoteFormView">
+        <button class="back-btn" onclick="closeQuoteForm()">← Back to Enquiries</button>
+
+        <form id="mainQuoteForm" method="POST" action="">
+            <div class="form-section">
+                <div class="form-section-title"><span class="dot dot-blue"></span> Enquiry Details</div>
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label>Customer Name</label>
+                        <div class="readonly-input" id="qfCustomer">—</div>
+                    </div>
+                    <div class="form-field">
+                        <label>Product</label>
+                        <div class="readonly-input" id="qfProduct">—</div>
+                    </div>
+                    <div class="form-field">
+                        <label>Grade & Size</label>
+                        <div class="readonly-input" id="qfGradeSize">—</div>
+                    </div>
+                    <div class="form-field">
+                        <label>Quantity</label>
+                        <div class="readonly-input" id="qfQty">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title"><span class="dot dot-green"></span> Commercial Terms</div>
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label>Rate (Rs.)</label>
+                        <input type="text" name="rate" id="qfRate" placeholder="e.g. 150/kg" required>
+                    </div>
+                    <div class="form-field">
+                        <label>GST</label>
+                        <input type="text" name="gst" value="18%" required>
+                    </div>
+                    <div class="form-field">
+                        <label>Payment Terms</label>
+                        <select name="payment_terms" required>
+                            <option value="Advance">Advance</option>
+                            <option value="15 days credit">15 days credit</option>
+                            <option value="30 days credit" selected>30 days credit</option>
+                            <option value="COD">COD</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label>Pickup Location</label>
+                        <input type="text" name="pickup_location" placeholder="e.g. Shop / Warehouse" value="Our Shop" required>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="generate-btn" id="generateBtn" onclick="this.innerText='Generating & Sending...'; this.style.backgroundColor='#e67e22';">
+                📄 Generate & Send PDF
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+// ===== INJECT LIVE DATA FROM PYTHON BACKEND =====
+// For now, hardcoded empty array. Backend should inject actual data.
+const liveEnquiries = [];
+
+let pendingEnquiries = liveEnquiries.filter(e => e.status === 'PENDING' || e.status === 'FAILED');
+let historyQuotes = liveEnquiries.filter(e => e.status === 'EMAIL SENT' || e.status === 'COMPLETED');
+
+// ===== TAB SWITCHING =====
+function switchTab(tabName) {
+    document.getElementById('quoteFormView').classList.remove('active');
+    document.getElementById('tabsNav').style.display = 'flex';
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.tab[data-tab="${tabName}"]`).classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    document.getElementById('tab-' + tabName).classList.add('active');
+}
+
+// ===== RENDER FUNCTIONS =====
+function renderPending() {
+    const container = document.getElementById('pendingList');
+    document.getElementById('pendingBadge').textContent = pendingEnquiries.length + ' pending';
+    document.getElementById('pendingTabCount').textContent = pendingEnquiries.length;
+    
+    if (pendingEnquiries.length === 0) {
+        container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>No pending enquiries. AI is watching the inbox!</p></div>';
+        return;
+    }
+    
+    container.innerHTML = pendingEnquiries.map(e => `
+        <div class="enquiry-card" style="${e.status === 'FAILED' ? 'border-left-color: #DC2626;' : ''}">
+            <div class="card-header">
+                <span class="customer-name">${e.customer}</span>
+                <span class="time-ago" style="${e.status === 'FAILED' ? 'color: #DC2626; font-weight: bold;' : ''}">${e.status}</span>
+            </div>
+            <div class="product-line">
+                ${e.productLine} <span class="qty-badge">Qty: ${e.qty} ${e.unit}</span>
+            </div>
+            <button class="view-quote-btn" style="${e.status === 'FAILED' ? 'background: #DC2626;' : ''}" onclick="openQuoteForm('${e.id}')">
+                📝 Quote & Send
+            </button>
+        </div>
+    `).join('');
+}
+
+function renderHistory() {
+    const tbody = document.getElementById('historyBody');
+    const emptyEl = document.getElementById('historyEmpty');
+
+    if (historyQuotes.length === 0) {
+        tbody.innerHTML = '';
+        emptyEl.style.display = 'block';
+        return;
+    }
+
+    emptyEl.style.display = 'none';
+    tbody.innerHTML = historyQuotes.map(h => `
+        <tr>
+            <td style="font-weight:600;">${h.customer}</td>
+            <td>${h.productLine}</td>
+            <td>${h.qty} ${h.unit}</td>
+            <td><span class="status-pill">Sent</span></td>
+        </tr>
+    `).join('');
+}
+
+// ===== QUOTE FORM =====
+function openQuoteForm(enquiryId) {
+    const enquiry = pendingEnquiries.find(e => e.id === enquiryId);
+    if (!enquiry) return;
+
+    // Fill read-only fields
+    document.getElementById('qfCustomer').textContent = enquiry.customer;
+    document.getElementById('qfProduct').textContent = enquiry.product.toUpperCase();
+    document.getElementById('qfGradeSize').textContent = `${enquiry.grade} / ${enquiry.size}`;
+    document.getElementById('qfQty').textContent = `${enquiry.qty} ${enquiry.unit}`;
+
+    // Link form to Backend route!
+    document.getElementById('mainQuoteForm').action = "/generate/" + enquiryId;
+
+    // Hide tabs, show form
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    document.getElementById('tabsNav').style.display = 'none';
+    
+    const formView = document.getElementById('quoteFormView');
+    formView.style.display = 'block';
+    formView.classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeQuoteForm() {
+    document.getElementById('quoteFormView').classList.remove('active');
+    document.getElementById('quoteFormView').style.display = 'none';
+    document.getElementById('tabsNav').style.display = 'flex';
+    switchTab('pending');
+}
+
+// Initialize on Load
+renderPending();
+renderHistory();
+</script>
+</body>
+</html>

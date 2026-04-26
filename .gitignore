@@ -1,0 +1,13 @@
+# Security / API Keys
+.env
+token.json
+credentials.json
+
+# Generated Documents
+pdfs/
+*.pdf
+
+# Python Junk Files
+__pycache__/
+*.pyc
+venv/
