@@ -15,93 +15,78 @@ def _headers():
         "Prefer": "return=minimal"
     }
 
-# ── Bug Fix 1: Added all missing functions that app.py was calling ──
+def _get(endpoint):
+    """Safe GET with detailed error printing."""
+    try:
+        r = requests.get(endpoint, headers=_headers())
+        if not r.ok:
+            print(f"❌ Supabase error {r.status_code}: {r.text}")
+            r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"❌ Request failed: {e}")
+        return []
+
 
 def save_enquiry(enquiry_data: dict):
     """Save a new enquiry to Supabase."""
     try:
-        response = requests.post(
+        r = requests.post(
             f"{url}/rest/v1/enquiries",
             json=enquiry_data,
             headers=_headers()
         )
-        response.raise_for_status()
-        print(f"✅ Saved enquiry: {enquiry_data.get('customer_name', 'Unknown')}")
+        if not r.ok:
+            print(f"❌ Save failed {r.status_code}: {r.text}")
+            return False
+        print(f"✅ Saved: {enquiry_data.get('customer_name', 'Unknown')}")
         return True
     except Exception as e:
-        print(f"❌ Error saving enquiry: {e}")
+        print(f"❌ Save error: {e}")
         return False
 
 
 def get_enquiry(enquiry_id: str):
-    """Fetch a single enquiry by ID from Supabase."""
-    try:
-        response = requests.get(
-            f"{url}/rest/v1/enquiries?id=eq.{enquiry_id}&select=*",
-            headers=_headers()
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Error fetching enquiry {enquiry_id}: {e}")
-        return None
+    """Fetch a single enquiry by ID."""
+    data = _get(f"{url}/rest/v1/enquiries?id=eq.{enquiry_id}&select=*")
+    return data[0] if data else None
 
 
 def list_pending():
-    """Return all PENDING enquiries, newest first."""
-    try:
-        response = requests.get(
-            f"{url}/rest/v1/enquiries?status=eq.PENDING&select=*&order=created_at.desc",
-            headers=_headers()
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"❌ Error listing pending enquiries: {e}")
-        return []
+    """Return all PENDING enquiries."""
+    return _get(f"{url}/rest/v1/enquiries?status=eq.PENDING&select=*")
 
 
 def list_all():
-    """Return ALL enquiries for the history tab, newest first."""
-    try:
-        response = requests.get(
-            f"{url}/rest/v1/enquiries?select=*&order=created_at.desc",
-            headers=_headers()
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"❌ Error listing all enquiries: {e}")
-        return []
+    """Return ALL enquiries for history tab."""
+    return _get(f"{url}/rest/v1/enquiries?select=*")
 
 
 def mark_quoted(enquiry_id: str, status: str = "EMAIL SENT"):
-    """Update status of an enquiry after quote is sent."""
+    """Update enquiry status after quote is sent."""
     try:
-        response = requests.patch(
+        r = requests.patch(
             f"{url}/rest/v1/enquiries?id=eq.{enquiry_id}",
             json={"status": status},
             headers=_headers()
         )
-        response.raise_for_status()
-        print(f"✅ Enquiry {enquiry_id} marked as {status}")
+        if not r.ok:
+            print(f"❌ Mark failed {r.status_code}: {r.text}")
+            return False
+        print(f"✅ Enquiry {enquiry_id} → {status}")
         return True
     except Exception as e:
-        print(f"❌ Error updating enquiry status: {e}")
+        print(f"❌ Mark error: {e}")
         return False
 
 
 def email_already_imported(raw_body: str) -> bool:
-    """Prevent duplicate processing — checks if this email body is already saved."""
+    """Prevent duplicate emails from being processed twice."""
     try:
-        snippet = (raw_body or "")[:200]
-        # Supabase full text match on first 200 chars
-        response = requests.get(
-            f"{url}/rest/v1/enquiries?raw_email=like.{requests.utils.quote(snippet[:50])}*&select=id",
-            headers=_headers()
-        )
-        data = response.json()
+        # Check using first 80 chars of email body as a fingerprint
+        snippet = (raw_body or "").strip()[:80]
+        encoded = requests.utils.quote(snippet)
+        data = _get(f"{url}/rest/v1/enquiries?raw_email=like.{encoded}*&select=id")
         return len(data) > 0
     except Exception:
         return False
