@@ -2,18 +2,21 @@ import os
 import json
 import re
 import time
-import logging
 from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
-logger = logging.getLogger(__name__)
 
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
-# ── Bug Fix 4: Try 3 models, retry twice each, temperature=0 for consistent JSON ──
-CANDIDATE_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+# gemini-1.5-flash and gemini-1.5-pro are deprecated in the new SDK
+# Use these currently working models in order of preference
+CANDIDATE_MODELS = [
+    "gemini-2.5-flash",      # Primary — fastest, smartest
+    "gemini-2.0-flash",      # Fallback 1 — very reliable
+    "gemini-2.0-flash-lite", # Fallback 2 — lightest, always available
+]
 
 PROMPT = """
 You are an assistant for a stainless steel supplier in India.
@@ -22,7 +25,7 @@ Read the customer enquiry email and extract ONLY these fields:
 - product_type    (pipe / elbow / flange / reducer / tee / cap / fitting / sheet / bar / other)
 - material_grade  (SS 304 / SS 316 / SS 202 / SS 316L / SS 310 / SS 321, or null)
 - size            (e.g. "2 inch SCH 40", "DN50", "1.5 inch", or null)
-- quantity        (NUMBER only — no units, or null)
+- quantity        (NUMBER only, no units, or null)
 - unit            (pieces / kg / metres / sets / sheets, or null)
 
 Return ONLY a valid JSON object. No markdown. No explanation. No code fences.
