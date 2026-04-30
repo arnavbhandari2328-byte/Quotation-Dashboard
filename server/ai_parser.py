@@ -10,12 +10,15 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
-# gemini-1.5-flash and gemini-1.5-pro are deprecated in the new SDK
-# Use these currently working models in order of preference
+# Model free tier limits (requests per day):
+# gemini-2.5-flash     → only 20/day  ❌ too low
+# gemini-2.0-flash     → 1,500/day    ✅ use as primary
+# gemini-2.0-flash-lite→ 1,500/day    ✅ fallback
+# gemini-2.5-flash     → kept as last resort if others fail
 CANDIDATE_MODELS = [
-    "gemini-2.5-flash",      # Primary — fastest, smartest
-    "gemini-2.0-flash",      # Fallback 1 — very reliable
-    "gemini-2.0-flash-lite", # Fallback 2 — lightest, always available
+    "gemini-2.0-flash",      # Primary — 1500/day free, fast
+    "gemini-2.0-flash-lite", # Fallback 1 — 1500/day free, lightest
+    "gemini-2.5-flash",      # Fallback 2 — only if others fail
 ]
 
 PROMPT = """
@@ -67,11 +70,9 @@ def parse_enquiry_email(email_body: str) -> dict:
                 if not isinstance(data, dict):
                     raise ValueError("Not a JSON object")
 
-                # Fill any missing keys with None
                 for k in SAFE_EMPTY:
                     data.setdefault(k, None)
 
-                # Coerce quantity to float
                 if data["quantity"] is not None:
                     try:
                         data["quantity"] = float(
@@ -86,6 +87,11 @@ def parse_enquiry_email(email_body: str) -> dict:
             except (json.JSONDecodeError, ValueError) as e:
                 print(f"⚠️ JSON error model={model_name} attempt={attempt+1}: {e}")
             except Exception as e:
+                error_str = str(e)
+                # If quota exhausted on this model, skip to next immediately
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                    print(f"⚠️ Quota hit on {model_name}, trying next model...")
+                    break
                 print(f"⚠️ API error model={model_name} attempt={attempt+1}: {e}")
                 time.sleep(1.5 * (attempt + 1))
 
