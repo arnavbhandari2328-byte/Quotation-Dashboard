@@ -10,7 +10,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Extended spam/system sender filter
+# Sender-level spam filter — these never reach AI
 AUTO_SKIP = [
     "mailer-daemon", "noreply", "no-reply",
     "postmaster", "bounce", "donotreply",
@@ -18,39 +18,49 @@ AUTO_SKIP = [
     "torbel.com", "undelivered", "delivery subsystem",
     "mail delivery", "auto-reply", "autoreply",
     "daemon", "system@", "support@google",
-    "accounts@google", "no.reply"
+    "accounts@google", "no.reply", "newsletter",
+    "nse", "bse", "sebi", "moneycontrol",
+    "info@amazon", "flipkart", "swiggy", "zomato",
 ]
 
 
 def process_inbox():
-    """Fetch unread emails, parse with AI, save new enquiries to Supabase."""
+    """Fetch unread emails → keyword filter → AI parse → save SS enquiries only."""
     print("📬 Checking inbox...")
     new_emails = fetch_unread_emails()
 
     if not new_emails:
-        print("📭 No new emails.")
+        print("🔴 No new emails.")
         return
+
+    print(f"📥 {len(new_emails)} unread email(s) found")
+    skipped = 0
+    saved = 0
 
     for email in new_emails:
         from_addr = email.get('from_address', '').lower()
         body = email.get('body', '')
 
-        # Skip automated/system emails — check both address and body
+        # ── Layer 1: Sender-level skip ──
         if any(p in from_addr for p in AUTO_SKIP):
-            print(f"🗑️  Skipped automated email from: {from_addr}")
+            print(f"🗑️  Sender blocked: {from_addr}")
+            skipped += 1
             continue
 
-        # Also skip if body is empty (bounce/delivery failure emails)
+        # ── Layer 2: Empty body skip ──
         if not body or len(body.strip()) < 20:
-            print(f"🗑️  Skipped empty/short email from: {from_addr}")
+            print(f"🗑️  Empty email from: {from_addr}")
+            skipped += 1
             continue
 
-        # Skip duplicate emails already in database
+        # ── Layer 3: Duplicate skip ──
         if email_already_imported(body):
             print(f"♻️  Duplicate skipped: {from_addr}")
+            skipped += 1
             continue
 
-        print(f"\n🔍 Processing email from {email['from_address']}...")
+        # ── Layer 4: AI parse (keyword pre-filter runs inside ai_parser) ──
+        print(f"\n🔍 Processing: {email['from_address']}")
         parsed = parse_enquiry_email(body)
 
         if parsed and parsed.get('product_type'):
@@ -60,11 +70,15 @@ def process_inbox():
                 'raw_email': body,
                 'status': 'PENDING'
             })
-            print(f"✅ Saved enquiry from {email['from_address']}")
+            saved += 1
+            print(f"✅ Saved: {email['from_address']}")
         else:
-            print(f"⏭️  No SS product found — skipped: {email['from_address']}")
+            print(f"⏭️  Not an SS enquiry: {email['from_address']}")
+            skipped += 1
 
-        time.sleep(2)
+        time.sleep(1)
+
+    print(f"\n📊 Done — {saved} saved, {skipped} skipped")
 
 
 if __name__ == '__main__':
