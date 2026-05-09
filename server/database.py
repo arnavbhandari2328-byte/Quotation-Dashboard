@@ -1,5 +1,6 @@
 import os
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,7 +17,6 @@ def _headers():
     }
 
 def _get(endpoint):
-    """Safe GET with detailed error printing."""
     try:
         r = requests.get(endpoint, headers=_headers())
         if not r.ok:
@@ -29,12 +29,11 @@ def _get(endpoint):
 
 
 def save_enquiry(enquiry_data: dict):
-    """Save a new enquiry to Supabase."""
     try:
         r = requests.post(
             f"{url}/rest/v1/enquiries",
             json=enquiry_data,
-            headers=_headers()
+            headers={**_headers(), "Prefer": "return=representation"}
         )
         if not r.ok:
             print(f"❌ Save failed {r.status_code}: {r.text}")
@@ -47,23 +46,45 @@ def save_enquiry(enquiry_data: dict):
 
 
 def get_enquiry(enquiry_id: str):
-    """Fetch a single enquiry by ID."""
     data = _get(f"{url}/rest/v1/enquiries?id=eq.{enquiry_id}&select=*")
     return data[0] if data else None
 
 
 def list_pending():
-    """Return all PENDING enquiries."""
-    return _get(f"{url}/rest/v1/enquiries?status=eq.PENDING&select=*")
+    return _get(f"{url}/rest/v1/enquiries?status=eq.PENDING&select=*&order=received_at.desc")
 
 
 def list_all():
-    """Return ALL enquiries for history tab."""
-    return _get(f"{url}/rest/v1/enquiries?select=*")
+    return _get(f"{url}/rest/v1/enquiries?select=*&order=received_at.desc")
+
+
+def list_sent():
+    """Return enquiries that have been quoted, joined with quote details."""
+    return _get(
+        f"{url}/rest/v1/enquiries"
+        f"?status=in.(EMAIL%20SENT,COMPLETED)&select=*,quotes(rate,grand_total,payment_terms,sent_at)&order=received_at.desc"
+    )
+
+
+def save_quote(quote_data: dict):
+    """Insert a new row into the quotes table with all commercial details."""
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/quotes",
+            json=quote_data,
+            headers={**_headers(), "Prefer": "return=minimal"}
+        )
+        if not r.ok:
+            print(f"❌ Save quote failed {r.status_code}: {r.text}")
+            return False
+        print(f"✅ Quote saved for enquiry {quote_data.get('enquiry_id')}")
+        return True
+    except Exception as e:
+        print(f"❌ Save quote error: {e}")
+        return False
 
 
 def mark_quoted(enquiry_id: str, status: str = "EMAIL SENT"):
-    """Update enquiry status after quote is sent."""
     try:
         r = requests.patch(
             f"{url}/rest/v1/enquiries?id=eq.{enquiry_id}",
@@ -81,9 +102,7 @@ def mark_quoted(enquiry_id: str, status: str = "EMAIL SENT"):
 
 
 def email_already_imported(raw_body: str) -> bool:
-    """Prevent duplicate emails from being processed twice."""
     try:
-        # Check using first 80 chars of email body as a fingerprint
         snippet = (raw_body or "").strip()[:80]
         encoded = requests.utils.quote(snippet)
         data = _get(f"{url}/rest/v1/enquiries?raw_email=like.{encoded}*&select=id")

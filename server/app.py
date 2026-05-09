@@ -1,8 +1,10 @@
 import os
 import asyncio
+import uuid
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
@@ -16,7 +18,6 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 load_dotenv(os.path.join(ROOT_DIR, '.env'))
 
 
-# ── Bug Fix 2: Background inbox poller (every 5 min, not 60s) ──
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🤖 Quotify Dashboard started — inbox watcher running...")
@@ -31,7 +32,7 @@ async def background_inbox_check():
             await asyncio.to_thread(process_inbox)
         except Exception as e:
             print(f"❌ Inbox check failed: {e}")
-        await asyncio.sleep(300)  # Check every 5 minutes
+        await asyncio.sleep(300)
 
 
 app = FastAPI(title="Quotify Dashboard", lifespan=lifespan)
@@ -45,15 +46,14 @@ async def read_dashboard(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"enquiries": enquiries}
+        context={"enquiries": enquiries, "view": "pending"}
     )
 
 
 # ── History: All sent quotes ──
 @app.get("/history", response_class=HTMLResponse)
 async def history_page(request: Request):
-    all_enquiries = database.list_all()
-    sent = [e for e in all_enquiries if e.get("status") not in ("PENDING", "FAILED")]
+    sent = database.list_sent()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -70,7 +70,6 @@ async def generate_quote(
     pickup_location: str = Form(...),
     gst: str = Form(...)
 ):
-    # ── Bug Fix 3: Use database.get_enquiry() instead of inline Supabase call ──
     enquiry_data = database.get_enquiry(enquiry_id)
 
     if not enquiry_data:
@@ -89,14 +88,50 @@ async def generate_quote(
     if customer_email:
         email_sent = send_quotation_email(customer_email, customer_name, pdf_filepath)
 
-    # 3. Update status in Supabase
+    # 3. Calculate financials for quotes table
+    try:
+        rate_clean = float(str(rate).replace('/kg','').replace('/pc','').replace('/m','').replace(',','').strip())
+    except (ValueError, TypeError):
+        rate_clean = 0.0
+
+    try:
+        qty = float(enquiry_data.get('quantity') or 0)
+    except (ValueError, TypeError):
+        qty = 0.0
+
+    try:
+        gst_pct = float(str(gst).replace('%','').strip())
+    except (ValueError, TypeError):
+        gst_pct = 18.0
+
+    subtotal = round(rate_clean * qty, 2)
+    gst_amount = round(subtotal * gst_pct / 100, 2)
+    grand_total = round(subtotal + gst_amount, 2)
+
+    # 4. Save to quotes table
+    database.save_quote({
+        "id": str(uuid.uuid4()),
+        "enquiry_id": enquiry_id,
+        "rate": rate_clean,
+        "subtotal": subtotal,
+        "gst_rate": gst_pct,
+        "gst_amount": gst_amount,
+        "grand_total": grand_total,
+        "payment_terms": payment_terms,
+        "validity_days": 5,
+        "notes": f"F.O.R: {pickup_location}",
+        "pdf_path": pdf_filepath,
+        "sent_at": datetime.utcnow().isoformat()
+    })
+
+    # 5. Update enquiry status
     final_status = "EMAIL SENT" if email_sent else "PDF GENERATED"
     database.mark_quoted(enquiry_id, final_status)
 
     return RedirectResponse(url="/", status_code=303)
 
 
-# ── API endpoints (for future use / testing) ──
+# ── API endpoints ──
 @app.get("/api/enquiries")
 async def api_enquiries():
     return database.list_pending()
@@ -105,3 +140,8 @@ async def api_enquiries():
 @app.get("/api/all")
 async def api_all():
     return database.list_all()
+
+
+@app.get("/api/history")
+async def api_history():
+    return database.list_sent()

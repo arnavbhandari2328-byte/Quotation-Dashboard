@@ -10,6 +10,17 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# Extended spam/system sender filter
+AUTO_SKIP = [
+    "mailer-daemon", "noreply", "no-reply",
+    "postmaster", "bounce", "donotreply",
+    "notifications@", "alert", "bseindia",
+    "torbel.com", "undelivered", "delivery subsystem",
+    "mail delivery", "auto-reply", "autoreply",
+    "daemon", "system@", "support@google",
+    "accounts@google", "no.reply"
+]
+
 
 def process_inbox():
     """Fetch unread emails, parse with AI, save new enquiries to Supabase."""
@@ -20,16 +31,18 @@ def process_inbox():
         print("📭 No new emails.")
         return
 
-    AUTO_SKIP = ["mailer-daemon", "noreply", "no-reply",
-                 "postmaster", "bounce", "donotreply", "notifications@"]
-
     for email in new_emails:
         from_addr = email.get('from_address', '').lower()
         body = email.get('body', '')
 
-        # Skip automated/system emails
+        # Skip automated/system emails — check both address and body
         if any(p in from_addr for p in AUTO_SKIP):
             print(f"🗑️  Skipped automated email from: {from_addr}")
+            continue
+
+        # Also skip if body is empty (bounce/delivery failure emails)
+        if not body or len(body.strip()) < 20:
+            print(f"🗑️  Skipped empty/short email from: {from_addr}")
             continue
 
         # Skip duplicate emails already in database
@@ -51,7 +64,7 @@ def process_inbox():
         else:
             print(f"⏭️  No SS product found — skipped: {email['from_address']}")
 
-        time.sleep(2)  # Avoid Gemini rate limits
+        time.sleep(2)
 
 
 if __name__ == '__main__':
