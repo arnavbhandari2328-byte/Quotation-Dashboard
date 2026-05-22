@@ -3,7 +3,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -131,7 +131,7 @@ async def generate_quote(
     return RedirectResponse(url="/", status_code=303)
 
 
-# ── API endpoints ──
+# ── API: enquiry endpoints ──
 @app.get("/api/enquiries")
 async def api_enquiries():
     return database.list_pending()
@@ -145,3 +145,36 @@ async def api_all():
 @app.get("/api/history")
 async def api_history():
     return database.list_sent()
+
+
+# ── API: Product catalog ──
+
+@app.get("/api/products")
+async def api_products():
+    """
+    Returns the full product catalog as a nested structure:
+    {
+      "SS 304": {
+        "SCH-10 (ERW)": [
+          {"product_id": "...", "product_name": "..."},
+          ...
+        ],
+        ...
+      },
+      "SS 316": { ... },
+      ...
+    }
+    """
+    catalog = database.get_product_catalog()
+    return JSONResponse(content=catalog)
+
+
+@app.get("/api/products/search")
+async def api_products_search(q: str = Query(..., min_length=1, description="Search term")):
+    """
+    Search products by name substring.
+    Example: /api/products/search?q=SCH-10
+    Returns a flat list of matching {product_id, product_name}.
+    """
+    results = database.search_products(q)
+    return JSONResponse(content=results)
