@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -109,3 +110,105 @@ def email_already_imported(raw_body: str) -> bool:
         return len(data) > 0
     except Exception:
         return False
+
+
+# ─────────────────────────────────────────────────────────────────
+# PRODUCT CATALOG — hierarchical: material → category → products
+# ─────────────────────────────────────────────────────────────────
+
+# Category inference rules: ordered by specificity.
+# Each entry is (regex_pattern, display_label)
+_CATEGORY_RULES = [
+    # NB Pipes – SCH variants (ERW)
+    (r"PIPE ERW SCH-05",  "SCH-05 (ERW)"),
+    (r"PIPE ERW SCH-10",  "SCH-10 (ERW)"),
+    (r"PIPE ERW SCH-20",  "SCH-20 (ERW)"),
+    (r"PIPE ERW SCH-40",  "SCH-40 (ERW)"),
+    # NB Pipes – SCH variants (SMLS)
+    (r"PIPE SMLS SCH-10", "SCH-10 (Seamless)"),
+    (r"PIPE SMLS SCH-40", "SCH-40 (Seamless)"),
+    # OD / Seamless misc
+    (r"SEAMLESS PIPE",    "Seamless Pipe"),
+    # Structural / decorative pipes
+    (r"PIPE ROUND",       "Round Pipe (OD)"),
+    (r"PIPE SQUARE",      "Square Pipe"),
+    (r"PIPE RECTANGLE|PIPR RECTANGLE|PIPE RECTANGE", "Rectangle Pipe"),
+    (r"POLISH PIPE",      "Polish Pipe"),
+    # CS pipe
+    (r"CS PIPE",          "CS Pipe"),
+    # Rods & bars
+    (r"ROUND BRIGHT ROD", "Round Bright Rod"),
+    (r"SQUARE ROD",       "Square Rod"),
+    # Sheets
+    (r"NO\.8 SHEET",      "No.8 Mirror Sheet"),
+    (r"NO\.4",            "No.4 Satin Sheet"),
+    (r"2B SHEET",         "2B Sheet"),
+    # Structurals
+    (r"ANGLE",            "Angle"),
+    (r"FLAT",             "Flat Bar"),
+    (r"SQUARE PIPE",      "Square Pipe (MS)"),
+]
+
+# Material extraction: map product_name keyword → top-level material key
+_MATERIAL_PATTERNS = [
+    (r"\bSS\s+304\b",  "SS 304"),
+    (r"\bSS\s+316\b",  "SS 316"),
+    (r"\bSS\s+202\b",  "SS 202"),
+    (r"\bCS\b",        "CS (Carbon Steel)"),
+    (r"\bMS\b",        "MS (Mild Steel)"),
+]
+
+
+def _infer_material(name: str) -> str:
+    for pattern, label in _MATERIAL_PATTERNS:
+        if re.search(pattern, name, re.IGNORECASE):
+            return label
+    return "Other"
+
+
+def _infer_category(name: str) -> str:
+    for pattern, label in _CATEGORY_RULES:
+        if re.search(pattern, name, re.IGNORECASE):
+            return label
+    return "Miscellaneous"
+
+
+def get_product_catalog() -> dict:
+    """
+    Fetch all products from Supabase and return a nested dict:
+    {
+      "SS 304": {
+        "SCH-10 (ERW)": [
+          {"product_id": "...", "product_name": "..."},
+          ...
+        ],
+        ...
+      },
+      "SS 316": { ... },
+      ...
+    }
+    """
+    rows = _get(f"{url}/rest/v1/products?select=product_id,product_name&order=product_name.asc")
+
+    catalog: dict = {}
+    for row in rows:
+        pid   = row.get("product_id", "")
+        pname = (row.get("product_name") or "").strip()
+        mat   = _infer_material(pname)
+        cat   = _infer_category(pname)
+
+        catalog.setdefault(mat, {}).setdefault(cat, []).append({
+            "product_id":   pid,
+            "product_name": pname,
+        })
+
+    return catalog
+
+
+def search_products(query: str) -> list:
+    """Full-text search across product_name (case-insensitive substring)."""
+    encoded = requests.utils.quote(f"*{query.strip()}*")
+    return _get(
+        f"{url}/rest/v1/products"
+        f"?product_name=ilike.{encoded}&select=product_id,product_name&order=product_name.asc"
+    )
