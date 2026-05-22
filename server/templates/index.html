@@ -75,6 +75,44 @@
         .email-preview { background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px; padding: 14px; font-size: 13px; color: #78350F; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; }
         .generate-btn { width: 100%; min-height: 52px; background: var(--primary); color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .generate-btn:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
+
+        /* ── Product Catalog Styles ── */
+        .catalog-toolbar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; flex-wrap: wrap; }
+        .catalog-search { flex: 1; min-width: 200px; padding: 10px 14px; border: 2px solid var(--border); border-radius: 8px; font-size: 14px; color: var(--text); outline: none; transition: border-color 0.2s; background: white; }
+        .catalog-search:focus { border-color: var(--primary); }
+        .catalog-expand-btn { background: #F1F5F9; border: 1px solid var(--border); color: var(--text-secondary); font-size: 13px; font-weight: 500; padding: 8px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+        .catalog-expand-btn:hover { background: #E2E8F0; color: var(--text); }
+        .catalog-count { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+
+        /* Material block */
+        .mat-block { background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); margin-bottom: 12px; overflow: hidden; }
+        .mat-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; cursor: pointer; user-select: none; transition: background 0.15s; }
+        .mat-header:hover { background: #F8FAFF; }
+        .mat-title { font-size: 16px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 10px; }
+        .mat-badge { background: var(--primary-light); color: var(--primary); font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 12px; }
+        .mat-chevron { font-size: 18px; color: var(--text-secondary); transition: transform 0.2s; line-height: 1; }
+        .mat-block.open .mat-chevron { transform: rotate(90deg); }
+        .mat-body { display: none; border-top: 1px solid var(--border); padding: 0 0 8px 0; }
+        .mat-block.open .mat-body { display: block; }
+
+        /* Category block */
+        .cat-block { margin: 8px 14px; border-radius: 8px; background: #F8FAFC; border: 1px solid var(--border); overflow: hidden; }
+        .cat-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; transition: background 0.15s; }
+        .cat-header:hover { background: #EFF3FB; }
+        .cat-title { font-size: 14px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+        .cat-count { font-size: 12px; color: var(--text-secondary); background: #E2E8F0; padding: 1px 8px; border-radius: 10px; }
+        .cat-chevron { font-size: 14px; color: var(--text-secondary); transition: transform 0.2s; line-height: 1; }
+        .cat-block.open .cat-chevron { transform: rotate(90deg); }
+        .cat-body { display: none; background: white; border-top: 1px solid var(--border); }
+        .cat-block.open .cat-body { display: block; }
+
+        /* Product rows */
+        .product-row { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid #F1F5F9; font-size: 13px; color: var(--text); transition: background 0.1s; }
+        .product-row:last-child { border-bottom: none; }
+        .product-row:hover { background: #F0F7FF; }
+        .product-row .pid { font-family: 'Courier New', monospace; font-size: 11px; color: var(--text-secondary); background: #F1F5F9; padding: 2px 6px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; }
+        .product-row .pname { flex: 1; font-weight: 500; }
+        .no-results { text-align: center; padding: 40px 20px; color: var(--text-secondary); font-size: 14px; }
     </style>
 </head>
 <body>
@@ -87,7 +125,7 @@
         </div>
         <div class="header-right">
             <span class="pending-badge" id="pendingBadge">— pending</span>
-            <button class="reset-btn" onclick="location.reload()">↻ Refresh</button>
+            <button class="reset-btn" onclick="location.reload()">&#8635; Refresh</button>
         </div>
     </div>
 
@@ -96,7 +134,10 @@
             Pending <span class="tab-count" id="pendingTabCount">0</span>
         </div>
         <div class="tab" data-tab="history" onclick="switchTab('history')">
-            History & Sent <span class="tab-count" id="historyTabCount">0</span>
+            History &amp; Sent <span class="tab-count" id="historyTabCount">0</span>
+        </div>
+        <div class="tab" data-tab="products" onclick="switchTab('products')">
+            Products <span class="tab-count" id="productsTabCount">—</span>
         </div>
     </div>
 
@@ -128,9 +169,20 @@
         </div>
     </div>
 
+    <!-- Products Catalog Tab -->
+    <div class="tab-content" id="tab-products">
+        <div class="catalog-toolbar">
+            <input class="catalog-search" id="catalogSearch" type="text" placeholder="🔍  Search product name or ID…" oninput="filterCatalog(this.value)">
+            <button class="catalog-expand-btn" onclick="toggleAllMaterials(true)">Expand All</button>
+            <button class="catalog-expand-btn" onclick="toggleAllMaterials(false)">Collapse All</button>
+            <span class="catalog-count" id="catalogCount"></span>
+        </div>
+        <div id="catalogTree"></div>
+    </div>
+
     <!-- Quote Form Panel -->
     <div class="quote-form-view" id="quoteFormView">
-        <button class="back-btn" onclick="closeQuoteForm()">← Back to Enquiries</button>
+        <button class="back-btn" onclick="closeQuoteForm()">&#8592; Back to Enquiries</button>
 
         <form id="mainQuoteForm" method="POST" action="">
             <!-- Enquiry Details -->
@@ -150,7 +202,7 @@
                         <div class="readonly-input" id="qfProduct">—</div>
                     </div>
                     <div class="form-field">
-                        <label>Grade & Size</label>
+                        <label>Grade &amp; Size</label>
                         <div class="readonly-input" id="qfGradeSize">—</div>
                     </div>
                     <div class="form-field">
@@ -198,7 +250,7 @@
 
             <button type="submit" class="generate-btn" id="generateBtn"
                 onclick="this.textContent='⏳ Generating & Sending...'; this.style.backgroundColor='#e67e22'; this.disabled=true;">
-                📄 Generate PDF & Send to Customer
+                📄 Generate PDF &amp; Send to Customer
             </button>
         </form>
     </div>
@@ -213,19 +265,25 @@ const currentView  = "{{ view }}";
 let pendingEnquiries = allEnquiries.filter(e => e.status === 'PENDING' || e.status === 'FAILED' || e.status === 'PDF GENERATED');
 let historyQuotes    = allEnquiries.filter(e => e.status === 'EMAIL SENT' || e.status === 'COMPLETED');
 
-// If we're on /history page, allEnquiries already has only sent records
 if (currentView === 'history') {
     historyQuotes = allEnquiries;
 }
 
+// ── Full catalog data (loaded once) ──
+let fullCatalog = null;
+
 // ── Tab Switching ──
 function switchTab(tabName) {
-    if (tabName === 'history') {
-        // Load history from server
-        window.location.href = '/history';
-        return;
-    }
-    window.location.href = '/';
+    if (tabName === 'history') { window.location.href = '/history'; return; }
+    if (tabName === 'pending') { window.location.href = '/'; return; }
+
+    // Products tab — stay on page
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    document.querySelector(`.tab[data-tab="products"]`).classList.add('active');
+    document.getElementById('tab-products').classList.add('active');
+
+    if (!fullCatalog) loadCatalog();
 }
 
 // ── Format date nicely ──
@@ -347,6 +405,130 @@ function initTabs() {
     const activeTab = currentView === 'history' ? 'history' : 'pending';
     document.querySelector(`.tab[data-tab="${activeTab}"]`)?.classList.add('active');
     document.getElementById(`tab-${activeTab}`)?.classList.add('active');
+}
+
+// ═══════════════════════════════════════════════
+// PRODUCT CATALOG
+// ═══════════════════════════════════════════════
+
+async function loadCatalog() {
+    const tree = document.getElementById('catalogTree');
+    tree.innerHTML = '<div class="no-results">⏳ Loading products from Supabase…</div>';
+
+    try {
+        const res = await fetch('/api/products');
+        if (!res.ok) throw new Error('API error ' + res.status);
+        fullCatalog = await res.json();
+        renderCatalog(fullCatalog);
+    } catch (err) {
+        tree.innerHTML = `<div class="no-results">❌ Failed to load products: ${err.message}</div>`;
+    }
+}
+
+function countCatalog(catalog) {
+    let total = 0;
+    for (const mat of Object.values(catalog))
+        for (const prods of Object.values(mat))
+            total += prods.length;
+    return total;
+}
+
+function renderCatalog(catalog) {
+    const tree = document.getElementById('catalogTree');
+    const total = countCatalog(catalog);
+    document.getElementById('productsTabCount').textContent = total;
+    document.getElementById('catalogCount').textContent = `${total} products across ${Object.keys(catalog).length} materials`;
+
+    if (total === 0) {
+        tree.innerHTML = '<div class="no-results">No products found.</div>';
+        return;
+    }
+
+    tree.innerHTML = Object.entries(catalog).map(([mat, categories]) => {
+        const matTotal = Object.values(categories).reduce((s, p) => s + p.length, 0);
+        const catsHtml = Object.entries(categories).map(([cat, products]) => {
+            const rowsHtml = products.map(p =>
+                `<div class="product-row">
+                    <span class="pname">${escHtml(p.product_name)}</span>
+                    <span class="pid">${escHtml(p.product_id)}</span>
+                </div>`
+            ).join('');
+            return `
+            <div class="cat-block" data-cat="${escHtml(cat)}">
+                <div class="cat-header" onclick="toggleCat(this.parentElement)">
+                    <span class="cat-title">📦 ${escHtml(cat)} <span class="cat-count">${products.length}</span></span>
+                    <span class="cat-chevron">›</span>
+                </div>
+                <div class="cat-body">${rowsHtml}</div>
+            </div>`;
+        }).join('');
+
+        return `
+        <div class="mat-block" data-mat="${escHtml(mat)}">
+            <div class="mat-header" onclick="toggleMat(this.parentElement)">
+                <span class="mat-title">🔩 ${escHtml(mat)} <span class="mat-badge">${matTotal} items</span></span>
+                <span class="mat-chevron">›</span>
+            </div>
+            <div class="mat-body">${catsHtml}</div>
+        </div>`;
+    }).join('');
+}
+
+function toggleMat(block) {
+    block.classList.toggle('open');
+}
+
+function toggleCat(block) {
+    block.classList.toggle('open');
+}
+
+function toggleAllMaterials(open) {
+    document.querySelectorAll('.mat-block').forEach(b => b.classList.toggle('open', open));
+    if (open) document.querySelectorAll('.cat-block').forEach(b => b.classList.add('open'));
+    else document.querySelectorAll('.cat-block').forEach(b => b.classList.remove('open'));
+}
+
+function filterCatalog(query) {
+    if (!fullCatalog) return;
+    const q = query.trim().toLowerCase();
+
+    if (!q) {
+        renderCatalog(fullCatalog);
+        return;
+    }
+
+    // Filter: keep only matching products, preserve hierarchy
+    const filtered = {};
+    for (const [mat, categories] of Object.entries(fullCatalog)) {
+        for (const [cat, products] of Object.entries(categories)) {
+            const matched = products.filter(p =>
+                p.product_name.toLowerCase().includes(q) ||
+                p.product_id.toLowerCase().includes(q)
+            );
+            if (matched.length > 0) {
+                if (!filtered[mat]) filtered[mat] = {};
+                filtered[mat][cat] = matched;
+            }
+        }
+    }
+
+    const total = countCatalog(filtered);
+    if (total === 0) {
+        document.getElementById('catalogTree').innerHTML = `<div class="no-results">No products matching "${escHtml(query)}"</div>`;
+        document.getElementById('catalogCount').textContent = '0 results';
+        return;
+    }
+
+    renderCatalog(filtered);
+    // Auto-expand all when searching
+    document.querySelectorAll('.mat-block, .cat-block').forEach(b => b.classList.add('open'));
+    document.getElementById('catalogCount').textContent = `${total} results for "${query}"`;
+}
+
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // ── Init ──
