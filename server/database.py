@@ -173,13 +173,68 @@ def _infer_category(name: str) -> str:
     return "Miscellaneous"
 
 
+# ─────────────────────────────────────────────────────────────────
+# BACKFILL — write material + category back into each products row
+# Run once after adding the columns in Supabase:
+#   ALTER TABLE products ADD COLUMN IF NOT EXISTS material text;
+#   ALTER TABLE products ADD COLUMN IF NOT EXISTS category text;
+# Then call POST /api/products/backfill
+# ─────────────────────────────────────────────────────────────────
+
+def backfill_product_categories() -> dict:
+    """
+    Reads every row from `products`, infers material + category from
+    product_name, then PATCHes each row to store those values directly
+    in the DB.  Returns a summary { updated, skipped, errors }.
+    """
+    rows = _get(f"{url}/rest/v1/products?select=product_id,product_name&order=product_name.asc")
+
+    updated = 0
+    skipped = 0
+    errors  = 0
+
+    for row in rows:
+        pid   = row.get("product_id", "")
+        pname = (row.get("product_name") or "").strip()
+        if not pid or not pname:
+            skipped += 1
+            continue
+
+        mat = _infer_material(pname)
+        cat = _infer_category(pname)
+
+        try:
+            encoded_pid = requests.utils.quote(pid, safe="")
+            r = requests.patch(
+                f"{url}/rest/v1/products?product_id=eq.{encoded_pid}",
+                json={"material": mat, "category": cat},
+                headers=_headers()
+            )
+            if r.ok:
+                updated += 1
+            else:
+                print(f"❌ Patch failed for {pid}: {r.status_code} {r.text}")
+                errors += 1
+        except Exception as e:
+            print(f"❌ Exception patching {pid}: {e}")
+            errors += 1
+
+    print(f"✅ Backfill done — updated={updated}, skipped={skipped}, errors={errors}")
+    return {"updated": updated, "skipped": skipped, "errors": errors}
+
+
+# ─────────────────────────────────────────────────────────────────
+# CATALOG READ — uses stored material/category columns if present,
+# falls back to runtime inference if columns are null/missing.
+# ─────────────────────────────────────────────────────────────────
+
 def get_product_catalog() -> dict:
     """
     Fetch all products from Supabase and return a nested dict:
     {
       "SS 304": {
         "SCH-10 (ERW)": [
-          {"product_id": "...", "product_name": "..."},
+          {"product_id": "...", "product_name": "...", "material": "SS 304", "category": "SCH-10 (ERW)"},
           ...
         ],
         ...
@@ -187,19 +242,28 @@ def get_product_catalog() -> dict:
       "SS 316": { ... },
       ...
     }
+    Prefers the stored `material` and `category` columns; infers on the
+    fly for any row where those columns are still null.
     """
-    rows = _get(f"{url}/rest/v1/products?select=product_id,product_name&order=product_name.asc")
+    rows = _get(
+        f"{url}/rest/v1/products"
+        f"?select=product_id,product_name,material,category&order=product_name.asc"
+    )
 
     catalog: dict = {}
     for row in rows:
         pid   = row.get("product_id", "")
         pname = (row.get("product_name") or "").strip()
-        mat   = _infer_material(pname)
-        cat   = _infer_category(pname)
+
+        # Use stored values if available, otherwise infer
+        mat = row.get("material") or _infer_material(pname)
+        cat = row.get("category") or _infer_category(pname)
 
         catalog.setdefault(mat, {}).setdefault(cat, []).append({
             "product_id":   pid,
             "product_name": pname,
+            "material":     mat,
+            "category":     cat,
         })
 
     return catalog
@@ -208,7 +272,15 @@ def get_product_catalog() -> dict:
 def search_products(query: str) -> list:
     """Full-text search across product_name (case-insensitive substring)."""
     encoded = requests.utils.quote(f"*{query.strip()}*")
-    return _get(
+    rows = _get(
         f"{url}/rest/v1/products"
-        f"?product_name=ilike.{encoded}&select=product_id,product_name&order=product_name.asc"
+        f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category&order=product_name.asc"
     )
+    # Ensure material/category are always populated in results
+    for row in rows:
+        pname = (row.get("product_name") or "").strip()
+        if not row.get("material"):
+            row["material"] = _infer_material(pname)
+        if not row.get("category"):
+            row["category"] = _infer_category(pname)
+    return rows
