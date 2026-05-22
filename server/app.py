@@ -156,7 +156,7 @@ async def api_products():
     {
       "SS 304": {
         "SCH-10 (ERW)": [
-          {"product_id": "...", "product_name": "..."},
+          {"product_id": "...", "product_name": "...", "material": "SS 304", "category": "SCH-10 (ERW)"},
           ...
         ],
         ...
@@ -174,7 +174,23 @@ async def api_products_search(q: str = Query(..., min_length=1, description="Sea
     """
     Search products by name substring.
     Example: /api/products/search?q=SCH-10
-    Returns a flat list of matching {product_id, product_name}.
+    Returns a flat list of matching {product_id, product_name, material, category}.
     """
     results = database.search_products(q)
     return JSONResponse(content=results)
+
+
+@app.post("/api/products/backfill")
+async def api_products_backfill():
+    """
+    One-time operation: reads every row in `products`, infers material + category
+    from product_name, and PATCHes those values back into the DB.
+
+    Prerequisites — run these SQL statements in Supabase SQL Editor first:
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS material text;
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS category text;
+
+    Returns: { updated, skipped, errors }
+    """
+    result = await asyncio.to_thread(database.backfill_product_categories)
+    return JSONResponse(content=result)
