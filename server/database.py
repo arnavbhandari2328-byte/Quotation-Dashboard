@@ -179,63 +179,76 @@ def _infer_category(name: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────
-# SIZE SORT KEY — extract numeric size info for ascending order
+# SIZE SORT KEY
 #
-# Priority of extraction:
-#   1. NB size        → "15 NB", "150NB"          → (size, 0, 0)
-#   2. OD size (inch) → "2\" OD", "1.5\" OD"      → (size, 0, 0)
-#   3. OD size (mm)   → "48.3 OD"                  → (size, 0, 0)
-#   4. SWG            → "14SWG", "16 SWG"          → (primary_dim, swg, 0)
-#                        primary_dim from OD/dim first number if present
-#   5. Dimension      → "16 X 16", "25 X 50"       → (first_dim, second_dim, 0)
-#   6. Fallback       → alphabetical via name
+# Returns a tuple used for ascending sort.  Logic:
+#
+#   For items WITH a primary dimension (NB / OD-inch / OD-mm / X-dim):
+#       (primary_dim, swg_or_0, second_dim_or_0, name)
+#       → sorts by size first; within the same size, lower SWG → higher SWG
+#         e.g.  15 NB 14SWG … 15 NB 16SWG … 20 NB 14SWG … 20 NB 16SWG
+#
+#   For items with SWG but NO primary dimension:
+#       (swg_val, 0, 0, name)
+#       → all 14 SWG smallest→largest by any sub-number, then 16 SWG, etc.
+#         (swg stored in position-0 so they sort by gauge first)
+#
+#   Dimension-only (X notation):
+#       (first_dim, second_dim, 0, name)
+#
+#   Pure numeric fallback:
+#       (leading_number, 0, 0, name)
+#
+#   No number at all:
+#       (inf, 0, 0, name)  → alphabetical within that bucket
 # ─────────────────────────────────────────────────────────────────
 
 def _size_sort_key(product_name: str):
     name = product_name.upper()
 
+    # Helper — extract SWG value if present
+    def _swg(n):
+        m = re.search(r'(\d+)\s*SWG', n)
+        return float(m.group(1)) if m else 0.0
+
     # 1. NB size  e.g. "15 NB", "150NB", "1/2 NB"
     nb = re.search(r'(\d+(?:\.\d+)?)\s*NB', name)
     if nb:
-        nb_val = float(nb.group(1))
-        # Also extract SWG as secondary within same NB size
-        swg = re.search(r'(\d+)\s*SWG', name)
-        swg_val = float(swg.group(1)) if swg else 0
-        return (nb_val, swg_val, 0, name)
+        return (float(nb.group(1)), _swg(name), 0.0, name)
 
-    # 2. OD size in inches  e.g. 2" OD, 1/2" OD
+    # 2. OD size in inches  e.g. 2" OD, 1.5" OD
     od_inch = re.search(r'(\d+(?:\.\d+)?)\s*["\u2019\']\s*OD', name)
     if od_inch:
-        od_val = float(od_inch.group(1))
-        swg = re.search(r'(\d+)\s*SWG', name)
-        swg_val = float(swg.group(1)) if swg else 0
-        return (od_val, swg_val, 0, name)
+        return (float(od_inch.group(1)), _swg(name), 0.0, name)
 
     # 3. OD size in mm  e.g. 48.3 OD, 60.3OD
     od_mm = re.search(r'(\d+(?:\.\d+)?)\s*OD', name)
     if od_mm:
-        od_val = float(od_mm.group(1))
-        swg = re.search(r'(\d+)\s*SWG', name)
-        swg_val = float(swg.group(1)) if swg else 0
-        return (od_val, swg_val, 0, name)
+        return (float(od_mm.group(1)), _swg(name), 0.0, name)
 
-    # 4. SWG only (no OD/NB prefix)  e.g. "14SWG", "16 SWG"
-    swg = re.search(r'(\d+)\s*SWG', name)
-    if swg:
-        return (0, float(swg.group(1)), 0, name)
-
-    # 5. Dimension  e.g. "16 X 16", "25 X 50", "2\" X 2\""
+    # 4. Dimension  e.g. "16 X 16", "25 X 50", "2\" X 2\""
     dim = re.search(r'(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)', name)
     if dim:
-        return (float(dim.group(1)), float(dim.group(2)), 0, name)
+        return (float(dim.group(1)), _swg(name), float(dim.group(2)), name)
+
+    # 5. SWG only (no OD/NB/dimension prefix)
+    #    Sort by SWG ascending so 14SWG group comes before 16SWG group.
+    #    Within the same SWG, any other leading number acts as secondary.
+    swg_m = re.search(r'(\d+)\s*SWG', name)
+    if swg_m:
+        swg_val = float(swg_m.group(1))
+        # grab any other leading number as a sub-size (e.g. OD written without "OD" keyword)
+        nums = re.findall(r'(\d+(?:\.\d+)?)', name)
+        other = next((float(n) for n in nums if float(n) != swg_val), 0.0)
+        return (swg_val, other, 0.0, name)
 
     # 6. Any leading number
     num = re.search(r'(\d+(?:\.\d+)?)', name)
     if num:
-        return (float(num.group(1)), 0, 0, name)
+        return (float(num.group(1)), 0.0, 0.0, name)
 
     # 7. Pure alphabetical fallback
-    return (float('inf'), 0, 0, name)
+    return (float('inf'), 0.0, 0.0, name)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -291,8 +304,12 @@ def backfill_product_categories() -> dict:
 # ─────────────────────────────────────────────────────────────────
 # CATALOG READ — uses stored material/category columns if present,
 # falls back to runtime inference if columns are null/missing.
-# Products within each category are sorted by size ascending:
-#   NB size → OD size → SWG (primary size then SWG) → dimension
+#
+# Sort order within each category (ascending):
+#   • NB/OD items:  smallest size first → within same size, lower SWG first
+#     e.g.  15 NB 14SWG → 15 NB 16SWG → 20 NB 14SWG → 20 NB 16SWG …
+#   • SWG-only items: 14SWG (all sizes asc) → 16SWG (all sizes asc) …
+#   • Dimension (X): first dim asc → second dim asc
 # ─────────────────────────────────────────────────────────────────
 
 def get_product_catalog() -> dict:
@@ -302,17 +319,13 @@ def get_product_catalog() -> dict:
       "SS 304": {
         "SCH-10 (ERW)": [
           {"product_id": "...", "product_name": "...", "material": "SS 304", "category": "SCH-10 (ERW)"},
-          ...   ← sorted 15 NB → 20 NB → 25 NB → ... → 150 NB
+          ...   ← sorted 15 NB 14SWG → 15 NB 16SWG → 20 NB 14SWG → …
         ],
         ...
       },
       ...
     }
-    Within each category products are sorted smallest → largest size.
-    For SWG items: sorted by primary dimension first, then SWG ascending
-    (so all 14 SWG sizes run smallest→largest, then all 16 SWG sizes, etc.)
     """
-    # Fetch without DB-level ordering — we sort in Python by size
     rows = _get(
         f"{url}/rest/v1/products"
         f"?select=product_id,product_name,material,category"
@@ -323,7 +336,6 @@ def get_product_catalog() -> dict:
         pid   = row.get("product_id", "")
         pname = (row.get("product_name") or "").strip()
 
-        # Use stored values if available, otherwise infer
         mat = row.get("material") or _infer_material(pname)
         cat = row.get("category") or _infer_category(pname)
 
@@ -349,7 +361,6 @@ def search_products(query: str) -> list:
         f"{url}/rest/v1/products"
         f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category"
     )
-    # Ensure material/category are always populated in results
     for row in rows:
         pname = (row.get("product_name") or "").strip()
         if not row.get("material"):
@@ -357,6 +368,5 @@ def search_products(query: str) -> list:
         if not row.get("category"):
             row["category"] = _infer_category(pname)
 
-    # Sort by size ascending
     rows.sort(key=lambda p: _size_sort_key(p.get("product_name", "")))
     return rows
