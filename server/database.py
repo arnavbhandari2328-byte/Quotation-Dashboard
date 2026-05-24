@@ -124,21 +124,26 @@ _CATEGORY_RULES = [
     (r"PIPE ERW SCH-10",  "SCH-10 (ERW)"),
     (r"PIPE ERW SCH-20",  "SCH-20 (ERW)"),
     (r"PIPE ERW SCH-40",  "SCH-40 (ERW)"),
-    # NB Pipes – SCH variants (SMLS)
+    # NB Pipes – SCH variants (SMLS) — keyword form
     (r"PIPE SMLS SCH-10", "SCH-10 (Seamless)"),
     (r"PIPE SMLS SCH-40", "SCH-40 (Seamless)"),
-    # OD / Seamless misc
-    (r"SEAMLESS PIPE",    "Seamless Pipe"),
+    # Seamless pipes with SCH written out (e.g. "SS 316 SEAMLESS PIPE SCH-40 150 NB")
+    (r"SEAMLESS PIPE SCH-40", "SCH-40 (Seamless)"),
+    (r"SEAMLESS PIPE SCH-10", "SCH-10 (Seamless)"),
+    (r"SEAMLESS PIPE SCH-20", "SCH-20 (Seamless)"),
+    # OD / Seamless misc (no SCH suffix)
+    (r"SEAMLESS PIPE",    "Seamless"),
     # Structural / decorative pipes
     (r"PIPE ROUND",       "Round Pipe (OD)"),
-    (r"PIPE SQUARE",      "Square Pipe"),
     (r"PIPE RECTANGLE|PIPR RECTANGLE|PIPE RECTANGE", "Rectangle Pipe"),
     (r"POLISH PIPE",      "Polish Pipe"),
     # CS pipe
     (r"CS PIPE",          "CS Pipe"),
-    # Rods & bars
+    # Rods & bars — MUST come before SQUARE PIPE rules
     (r"ROUND BRIGHT ROD", "Round Bright Rod"),
     (r"SQUARE ROD",       "Square Rod"),
+    # Square / Rectangle pipes (after rod rules)
+    (r"PIPE SQUARE",      "Square Pipe"),
     # Sheets
     (r"NO\.8 SHEET",      "No.8 Mirror Sheet"),
     (r"NO\.4",            "No.4 Satin Sheet"),
@@ -171,6 +176,66 @@ def _infer_category(name: str) -> str:
         if re.search(pattern, name, re.IGNORECASE):
             return label
     return "Miscellaneous"
+
+
+# ─────────────────────────────────────────────────────────────────
+# SIZE SORT KEY — extract numeric size info for ascending order
+#
+# Priority of extraction:
+#   1. NB size        → "15 NB", "150NB"          → (size, 0, 0)
+#   2. OD size (inch) → "2\" OD", "1.5\" OD"      → (size, 0, 0)
+#   3. OD size (mm)   → "48.3 OD"                  → (size, 0, 0)
+#   4. SWG            → "14SWG", "16 SWG"          → (primary_dim, swg, 0)
+#                        primary_dim from OD/dim first number if present
+#   5. Dimension      → "16 X 16", "25 X 50"       → (first_dim, second_dim, 0)
+#   6. Fallback       → alphabetical via name
+# ─────────────────────────────────────────────────────────────────
+
+def _size_sort_key(product_name: str):
+    name = product_name.upper()
+
+    # 1. NB size  e.g. "15 NB", "150NB", "1/2 NB"
+    nb = re.search(r'(\d+(?:\.\d+)?)\s*NB', name)
+    if nb:
+        nb_val = float(nb.group(1))
+        # Also extract SWG as secondary within same NB size
+        swg = re.search(r'(\d+)\s*SWG', name)
+        swg_val = float(swg.group(1)) if swg else 0
+        return (nb_val, swg_val, 0, name)
+
+    # 2. OD size in inches  e.g. 2" OD, 1/2" OD
+    od_inch = re.search(r'(\d+(?:\.\d+)?)\s*["\u2019\']\s*OD', name)
+    if od_inch:
+        od_val = float(od_inch.group(1))
+        swg = re.search(r'(\d+)\s*SWG', name)
+        swg_val = float(swg.group(1)) if swg else 0
+        return (od_val, swg_val, 0, name)
+
+    # 3. OD size in mm  e.g. 48.3 OD, 60.3OD
+    od_mm = re.search(r'(\d+(?:\.\d+)?)\s*OD', name)
+    if od_mm:
+        od_val = float(od_mm.group(1))
+        swg = re.search(r'(\d+)\s*SWG', name)
+        swg_val = float(swg.group(1)) if swg else 0
+        return (od_val, swg_val, 0, name)
+
+    # 4. SWG only (no OD/NB prefix)  e.g. "14SWG", "16 SWG"
+    swg = re.search(r'(\d+)\s*SWG', name)
+    if swg:
+        return (0, float(swg.group(1)), 0, name)
+
+    # 5. Dimension  e.g. "16 X 16", "25 X 50", "2\" X 2\""
+    dim = re.search(r'(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)', name)
+    if dim:
+        return (float(dim.group(1)), float(dim.group(2)), 0, name)
+
+    # 6. Any leading number
+    num = re.search(r'(\d+(?:\.\d+)?)', name)
+    if num:
+        return (float(num.group(1)), 0, 0, name)
+
+    # 7. Pure alphabetical fallback
+    return (float('inf'), 0, 0, name)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -226,6 +291,8 @@ def backfill_product_categories() -> dict:
 # ─────────────────────────────────────────────────────────────────
 # CATALOG READ — uses stored material/category columns if present,
 # falls back to runtime inference if columns are null/missing.
+# Products within each category are sorted by size ascending:
+#   NB size → OD size → SWG (primary size then SWG) → dimension
 # ─────────────────────────────────────────────────────────────────
 
 def get_product_catalog() -> dict:
@@ -235,19 +302,20 @@ def get_product_catalog() -> dict:
       "SS 304": {
         "SCH-10 (ERW)": [
           {"product_id": "...", "product_name": "...", "material": "SS 304", "category": "SCH-10 (ERW)"},
-          ...
+          ...   ← sorted 15 NB → 20 NB → 25 NB → ... → 150 NB
         ],
         ...
       },
-      "SS 316": { ... },
       ...
     }
-    Prefers the stored `material` and `category` columns; infers on the
-    fly for any row where those columns are still null.
+    Within each category products are sorted smallest → largest size.
+    For SWG items: sorted by primary dimension first, then SWG ascending
+    (so all 14 SWG sizes run smallest→largest, then all 16 SWG sizes, etc.)
     """
+    # Fetch without DB-level ordering — we sort in Python by size
     rows = _get(
         f"{url}/rest/v1/products"
-        f"?select=product_id,product_name,material,category&order=product_name.asc"
+        f"?select=product_id,product_name,material,category"
     )
 
     catalog: dict = {}
@@ -266,15 +334,20 @@ def get_product_catalog() -> dict:
             "category":     cat,
         })
 
+    # Sort each category's product list by size ascending
+    for mat in catalog:
+        for cat in catalog[mat]:
+            catalog[mat][cat].sort(key=lambda p: _size_sort_key(p["product_name"]))
+
     return catalog
 
 
 def search_products(query: str) -> list:
-    """Full-text search across product_name (case-insensitive substring)."""
+    """Full-text search across product_name (case-insensitive substring), sorted by size."""
     encoded = requests.utils.quote(f"*{query.strip()}*")
     rows = _get(
         f"{url}/rest/v1/products"
-        f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category&order=product_name.asc"
+        f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category"
     )
     # Ensure material/category are always populated in results
     for row in rows:
@@ -283,4 +356,7 @@ def search_products(query: str) -> list:
             row["material"] = _infer_material(pname)
         if not row.get("category"):
             row["category"] = _infer_category(pname)
+
+    # Sort by size ascending
+    rows.sort(key=lambda p: _size_sort_key(p.get("product_name", "")))
     return rows
