@@ -111,7 +111,8 @@ def email_already_imported(raw_body: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────
-# PRODUCT CATALOG — hierarchical: material → category → products
+# SHARED CATEGORY / MATERIAL INFERENCE
+# Used by BOTH warehouse and office stock
 # ─────────────────────────────────────────────────────────────────
 
 _CATEGORY_RULES = [
@@ -200,6 +201,11 @@ def _size_sort_key(product_name: str):
     return (float('inf'), 0.0, 0.0, name)
 
 
+# ─────────────────────────────────────────────────────────────────
+# PRODUCT CATALOG — hierarchical: material → category → products
+# products table: product_id, product_name, material, category, location
+# ─────────────────────────────────────────────────────────────────
+
 def backfill_product_categories() -> dict:
     rows = _get(f"{url}/rest/v1/products?select=product_id,product_name&order=product_name.asc")
 
@@ -238,9 +244,13 @@ def backfill_product_categories() -> dict:
 
 
 def get_product_catalog() -> dict:
+    """
+    Returns nested catalog: material → category → [products]
+    Each product now includes 'location' field.
+    """
     rows = _get(
         f"{url}/rest/v1/products"
-        f"?select=product_id,product_name,material,category"
+        f"?select=product_id,product_name,material,category,location"
     )
 
     catalog: dict = {}
@@ -256,6 +266,7 @@ def get_product_catalog() -> dict:
             "product_name": pname,
             "material":     mat,
             "category":     cat,
+            "location":     row.get("location") or "",
         })
 
     for mat in catalog:
@@ -265,11 +276,39 @@ def get_product_catalog() -> dict:
     return catalog
 
 
+def add_product(product_data: dict) -> bool:
+    """
+    Adds a new product to the products table.
+    Expected fields: product_id, product_name, material, category, location (optional)
+    Auto-infers material/category if not provided.
+    """
+    pname = (product_data.get("product_name") or "").strip()
+    if not product_data.get("material"):
+        product_data["material"] = _infer_material(pname)
+    if not product_data.get("category"):
+        product_data["category"] = _infer_category(pname)
+
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/products",
+            json=product_data,
+            headers={**_headers(), "Prefer": "return=minimal"}
+        )
+        if not r.ok:
+            print(f"❌ Add product failed {r.status_code}: {r.text}")
+            return False
+        print(f"✅ Product added: {pname}")
+        return True
+    except Exception as e:
+        print(f"❌ Add product error: {e}")
+        return False
+
+
 def search_products(query: str) -> list:
     encoded = requests.utils.quote(f"*{query.strip()}*")
     rows = _get(
         f"{url}/rest/v1/products"
-        f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category"
+        f"?product_name=ilike.{encoded}&select=product_id,product_name,material,category,location"
     )
     for row in rows:
         pname = (row.get("product_name") or "").strip()
@@ -373,7 +412,6 @@ def get_warehouse_catalog_with_stock() -> dict:
     for pid, stock in levels.items():
         mat = stock.get("material") or "Other"
         cat = stock.get("category") or "Miscellaneous"
-        # Check if already added
         existing = result.get(mat, {}).get(cat, [])
         if not any(e["product_id"] == pid for e in existing):
             result.setdefault(mat, {}).setdefault(cat, []).append(stock)
@@ -414,9 +452,25 @@ def delete_warehouse_entry(entry_id: str) -> bool:
 #   type (text: 'IN'|'OUT'), qty (numeric), unit (text),
 #   rate (numeric), entry_date (date), remarks (text),
 #   is_hero (bool), created_at (timestamptz)
+#
+# NOTE: material & category use the SAME _infer_material / _infer_category
+#       rules as warehouse stock so categories are identical across both.
 # ═══════════════════════════════════════════════════════════════════
 
 def add_office_entry(entry: dict) -> bool:
+    """
+    Saves a new office stock row.
+    Auto-infers material & category from item_name if not provided,
+    using the same rules as warehouse stock.
+    """
+    item_name = (entry.get("item_name") or "").strip()
+
+    # Auto-infer material/category if missing — same rules as warehouse
+    if not entry.get("material"):
+        entry["material"] = _infer_material(item_name)
+    if not entry.get("category"):
+        entry["category"] = _infer_category(item_name)
+
     try:
         r = requests.post(
             f"{url}/rest/v1/office_stock",
@@ -426,36 +480,57 @@ def add_office_entry(entry: dict) -> bool:
         if not r.ok:
             print(f"❌ Office entry failed {r.status_code}: {r.text}")
             return False
+        print(f"✅ Office entry saved: {item_name}")
         return True
     except Exception as e:
         print(f"❌ Office entry error: {e}")
         return False
 
 
-def get_office_entries(item_key: str = None) -> list:
-    if item_key:
-        encoded_mat = requests.utils.quote(item_key.split("||")[0], safe="")
-        encoded_cat = requests.utils.quote(item_key.split("||")[1] if "||" in item_key else "", safe="")
-        return _get(
-            f"{url}/rest/v1/office_stock"
-            f"?material=eq.{encoded_mat}&category=eq.{encoded_cat}"
-            f"&select=*&order=entry_date.desc,created_at.desc"
-        )
-    return _get(f"{url}/rest/v1/office_stock?select=*&order=entry_date.desc,created_at.desc")
+def get_office_entries(item_name: str = None, material: str = None, category: str = None) -> list:
+    """
+    Fetch office stock ledger rows.
+    - No args → all rows
+    - item_name only → filter by exact item_name
+    - material + category → filter by both
+    - all three → filter by all three
+    """
+    filters = []
+    if item_name:
+        filters.append(f"item_name=eq.{requests.utils.quote(item_name, safe='')}")
+    if material:
+        filters.append(f"material=eq.{requests.utils.quote(material, safe='')}")
+    if category:
+        filters.append(f"category=eq.{requests.utils.quote(category, safe='')}")
+
+    qs = "&".join(filters)
+    suffix = f"&{qs}" if qs else ""
+    return _get(
+        f"{url}/rest/v1/office_stock"
+        f"?select=*&order=entry_date.desc,created_at.desc{suffix}"
+    )
 
 
 def get_office_stock_levels() -> dict:
     """
-    Returns current stock level per (material, category, item_name).
+    Returns current stock level per (item_name, material, category).
     key = f"{material}||{category}||{item_name}"
+
+    material and category are inferred via the same rules as warehouse
+    if not already set on the row.
     """
     rows = _get(f"{url}/rest/v1/office_stock?select=*&order=entry_date.asc")
     levels = {}
     for row in rows:
-        item_name = row.get("item_name", "")
-        mat       = row.get("material", "General")
-        cat       = row.get("category", "Miscellaneous")
-        key       = f"{mat}||{cat}||{item_name}"
+        item_name = (row.get("item_name") or "").strip()
+        if not item_name:
+            continue
+
+        # Use stored values; fall back to inference (same rules as warehouse)
+        mat = (row.get("material") or "").strip() or _infer_material(item_name)
+        cat = (row.get("category") or "").strip() or _infer_category(item_name)
+        key = f"{mat}||{cat}||{item_name}"
+
         if key not in levels:
             levels[key] = {
                 "item_name": item_name,
@@ -477,13 +552,14 @@ def get_office_stock_levels() -> dict:
 
 def get_office_catalog_with_stock() -> dict:
     """
-    Returns office stock as a nested dict:
+    Returns office stock as nested dict:
     { material: { category: [ { item_name, qty, unit, is_hero } ] } }
+    Categories match warehouse stock categories.
     """
     levels = get_office_stock_levels()
     result = {}
     for key, stock in levels.items():
-        mat = stock.get("material", "General")
+        mat = stock.get("material", "Other")
         cat = stock.get("category", "Miscellaneous")
         result.setdefault(mat, {}).setdefault(cat, []).append(stock)
     return result
