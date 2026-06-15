@@ -60,7 +60,6 @@ def list_all():
 
 
 def list_sent():
-    """Return enquiries that have been quoted, joined with quote details."""
     return _get(
         f"{url}/rest/v1/enquiries"
         f"?status=in.(EMAIL%20SENT,COMPLETED)&select=*,quotes(rate,grand_total,payment_terms,sent_at)&order=received_at.desc"
@@ -68,7 +67,6 @@ def list_sent():
 
 
 def save_quote(quote_data: dict):
-    """Insert a new row into the quotes table with all commercial details."""
     try:
         r = requests.post(
             f"{url}/rest/v1/quotes",
@@ -116,45 +114,32 @@ def email_already_imported(raw_body: str) -> bool:
 # PRODUCT CATALOG — hierarchical: material → category → products
 # ─────────────────────────────────────────────────────────────────
 
-# Category inference rules: ordered by specificity.
-# Each entry is (regex_pattern, display_label)
 _CATEGORY_RULES = [
-    # NB Pipes – SCH variants (ERW)
     (r"PIPE ERW SCH-05",  "SCH-05 (ERW)"),
     (r"PIPE ERW SCH-10",  "SCH-10 (ERW)"),
     (r"PIPE ERW SCH-20",  "SCH-20 (ERW)"),
     (r"PIPE ERW SCH-40",  "SCH-40 (ERW)"),
-    # NB Pipes – SCH variants (SMLS) — keyword form
     (r"PIPE SMLS SCH-10", "SCH-10 (Seamless)"),
     (r"PIPE SMLS SCH-40", "SCH-40 (Seamless)"),
-    # Seamless pipes with SCH written out (e.g. "SS 316 SEAMLESS PIPE SCH-40 150 NB")
     (r"SEAMLESS PIPE SCH-40", "SCH-40 (Seamless)"),
     (r"SEAMLESS PIPE SCH-10", "SCH-10 (Seamless)"),
     (r"SEAMLESS PIPE SCH-20", "SCH-20 (Seamless)"),
-    # OD / Seamless misc (no SCH suffix)
     (r"SEAMLESS PIPE",    "Seamless"),
-    # Structural / decorative pipes
     (r"PIPE ROUND",       "Round Pipe (OD)"),
     (r"PIPE RECTANGLE|PIPR RECTANGLE|PIPE RECTANGE", "Rectangle Pipe"),
     (r"POLISH PIPE",      "Polish Pipe"),
-    # CS pipe
     (r"CS PIPE",          "CS Pipe"),
-    # Rods & bars — MUST come before SQUARE PIPE rules
     (r"ROUND BRIGHT ROD", "Round Bright Rod"),
     (r"SQUARE ROD",       "Square Rod"),
-    # Square / Rectangle pipes (after rod rules)
     (r"PIPE SQUARE",      "Square Pipe"),
-    # Sheets
     (r"NO\.8 SHEET",      "No.8 Mirror Sheet"),
     (r"NO\.4",            "No.4 Satin Sheet"),
     (r"2B SHEET",         "2B Sheet"),
-    # Structurals
     (r"ANGLE",            "Angle"),
     (r"FLAT",             "Flat Bar"),
     (r"SQUARE PIPE",      "Square Pipe (MS)"),
 ]
 
-# Material extraction: map product_name keyword → top-level material key
 _MATERIAL_PATTERNS = [
     (r"\bSS\s+304\b",  "SS 304"),
     (r"\bSS\s+316\b",  "SS 316"),
@@ -178,93 +163,44 @@ def _infer_category(name: str) -> str:
     return "Miscellaneous"
 
 
-# ─────────────────────────────────────────────────────────────────
-# SIZE SORT KEY
-#
-# Returns a tuple used for ascending sort.  Logic:
-#
-#   For items WITH a primary dimension (NB / OD-inch / OD-mm / X-dim):
-#       (primary_dim, swg_or_0, second_dim_or_0, name)
-#       → sorts by size first; within the same size, lower SWG → higher SWG
-#         e.g.  15 NB 14SWG … 15 NB 16SWG … 20 NB 14SWG … 20 NB 16SWG
-#
-#   For items with SWG but NO primary dimension:
-#       (swg_val, 0, 0, name)
-#       → all 14 SWG smallest→largest by any sub-number, then 16 SWG, etc.
-#         (swg stored in position-0 so they sort by gauge first)
-#
-#   Dimension-only (X notation):
-#       (first_dim, second_dim, 0, name)
-#
-#   Pure numeric fallback:
-#       (leading_number, 0, 0, name)
-#
-#   No number at all:
-#       (inf, 0, 0, name)  → alphabetical within that bucket
-# ─────────────────────────────────────────────────────────────────
-
 def _size_sort_key(product_name: str):
     name = product_name.upper()
 
-    # Helper — extract SWG value if present
     def _swg(n):
         m = re.search(r'(\d+)\s*SWG', n)
         return float(m.group(1)) if m else 0.0
 
-    # 1. NB size  e.g. "15 NB", "150NB", "1/2 NB"
     nb = re.search(r'(\d+(?:\.\d+)?)\s*NB', name)
     if nb:
         return (float(nb.group(1)), _swg(name), 0.0, name)
 
-    # 2. OD size in inches  e.g. 2" OD, 1.5" OD
     od_inch = re.search(r'(\d+(?:\.\d+)?)\s*["\u2019\']\s*OD', name)
     if od_inch:
         return (float(od_inch.group(1)), _swg(name), 0.0, name)
 
-    # 3. OD size in mm  e.g. 48.3 OD, 60.3OD
     od_mm = re.search(r'(\d+(?:\.\d+)?)\s*OD', name)
     if od_mm:
         return (float(od_mm.group(1)), _swg(name), 0.0, name)
 
-    # 4. Dimension  e.g. "16 X 16", "25 X 50", "2\" X 2\""
     dim = re.search(r'(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)', name)
     if dim:
         return (float(dim.group(1)), _swg(name), float(dim.group(2)), name)
 
-    # 5. SWG only (no OD/NB/dimension prefix)
-    #    Sort by SWG ascending so 14SWG group comes before 16SWG group.
-    #    Within the same SWG, any other leading number acts as secondary.
     swg_m = re.search(r'(\d+)\s*SWG', name)
     if swg_m:
         swg_val = float(swg_m.group(1))
-        # grab any other leading number as a sub-size (e.g. OD written without "OD" keyword)
         nums = re.findall(r'(\d+(?:\.\d+)?)', name)
         other = next((float(n) for n in nums if float(n) != swg_val), 0.0)
         return (swg_val, other, 0.0, name)
 
-    # 6. Any leading number
     num = re.search(r'(\d+(?:\.\d+)?)', name)
     if num:
         return (float(num.group(1)), 0.0, 0.0, name)
 
-    # 7. Pure alphabetical fallback
     return (float('inf'), 0.0, 0.0, name)
 
 
-# ─────────────────────────────────────────────────────────────────
-# BACKFILL — write material + category back into each products row
-# Run once after adding the columns in Supabase:
-#   ALTER TABLE products ADD COLUMN IF NOT EXISTS material text;
-#   ALTER TABLE products ADD COLUMN IF NOT EXISTS category text;
-# Then call POST /api/products/backfill
-# ─────────────────────────────────────────────────────────────────
-
 def backfill_product_categories() -> dict:
-    """
-    Reads every row from `products`, infers material + category from
-    product_name, then PATCHes each row to store those values directly
-    in the DB.  Returns a summary { updated, skipped, errors }.
-    """
     rows = _get(f"{url}/rest/v1/products?select=product_id,product_name&order=product_name.asc")
 
     updated = 0
@@ -301,31 +237,7 @@ def backfill_product_categories() -> dict:
     return {"updated": updated, "skipped": skipped, "errors": errors}
 
 
-# ─────────────────────────────────────────────────────────────────
-# CATALOG READ — uses stored material/category columns if present,
-# falls back to runtime inference if columns are null/missing.
-#
-# Sort order within each category (ascending):
-#   • NB/OD items:  smallest size first → within same size, lower SWG first
-#     e.g.  15 NB 14SWG → 15 NB 16SWG → 20 NB 14SWG → 20 NB 16SWG …
-#   • SWG-only items: 14SWG (all sizes asc) → 16SWG (all sizes asc) …
-#   • Dimension (X): first dim asc → second dim asc
-# ─────────────────────────────────────────────────────────────────
-
 def get_product_catalog() -> dict:
-    """
-    Fetch all products from Supabase and return a nested dict:
-    {
-      "SS 304": {
-        "SCH-10 (ERW)": [
-          {"product_id": "...", "product_name": "...", "material": "SS 304", "category": "SCH-10 (ERW)"},
-          ...   ← sorted 15 NB 14SWG → 15 NB 16SWG → 20 NB 14SWG → …
-        ],
-        ...
-      },
-      ...
-    }
-    """
     rows = _get(
         f"{url}/rest/v1/products"
         f"?select=product_id,product_name,material,category"
@@ -346,7 +258,6 @@ def get_product_catalog() -> dict:
             "category":     cat,
         })
 
-    # Sort each category's product list by size ascending
     for mat in catalog:
         for cat in catalog[mat]:
             catalog[mat][cat].sort(key=lambda p: _size_sort_key(p["product_name"]))
@@ -355,7 +266,6 @@ def get_product_catalog() -> dict:
 
 
 def search_products(query: str) -> list:
-    """Full-text search across product_name (case-insensitive substring), sorted by size."""
     encoded = requests.utils.quote(f"*{query.strip()}*")
     rows = _get(
         f"{url}/rest/v1/products"
@@ -370,3 +280,384 @@ def search_products(query: str) -> list:
 
     rows.sort(key=lambda p: _size_sort_key(p.get("product_name", "")))
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WAREHOUSE STOCK
+# Table: warehouse_stock
+#   id (uuid), product_id (text, FK→products), product_name (text),
+#   material (text), category (text),
+#   type (text: 'IN'|'OUT'), qty (numeric), unit (text),
+#   rate (numeric), entry_date (date), remarks (text),
+#   is_hero (bool), created_at (timestamptz)
+# ═══════════════════════════════════════════════════════════════════
+
+def add_warehouse_entry(entry: dict) -> bool:
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/warehouse_stock",
+            json=entry,
+            headers={**_headers(), "Prefer": "return=minimal"}
+        )
+        if not r.ok:
+            print(f"❌ Warehouse entry failed {r.status_code}: {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ Warehouse entry error: {e}")
+        return False
+
+
+def get_warehouse_entries(product_id: str = None) -> list:
+    if product_id:
+        encoded = requests.utils.quote(product_id, safe="")
+        return _get(f"{url}/rest/v1/warehouse_stock?product_id=eq.{encoded}&select=*&order=entry_date.desc,created_at.desc")
+    return _get(f"{url}/rest/v1/warehouse_stock?select=*&order=entry_date.desc,created_at.desc")
+
+
+def get_warehouse_stock_levels() -> dict:
+    """
+    Returns current stock level per product_id.
+    Level = SUM(qty where type=IN) - SUM(qty where type=OUT)
+    Returns: { product_id: { product_name, material, category, qty, unit, is_hero } }
+    """
+    rows = _get(f"{url}/rest/v1/warehouse_stock?select=*&order=entry_date.asc")
+    levels = {}
+    for row in rows:
+        pid = row.get("product_id", "")
+        if not pid:
+            continue
+        if pid not in levels:
+            levels[pid] = {
+                "product_id":   pid,
+                "product_name": row.get("product_name", ""),
+                "material":     row.get("material", ""),
+                "category":     row.get("category", ""),
+                "qty":          0.0,
+                "unit":         row.get("unit", "Pcs"),
+                "is_hero":      row.get("is_hero", False),
+            }
+        delta = float(row.get("qty") or 0)
+        if row.get("type") == "IN":
+            levels[pid]["qty"] += delta
+        else:
+            levels[pid]["qty"] -= delta
+        if row.get("is_hero"):
+            levels[pid]["is_hero"] = True
+    return levels
+
+
+def get_warehouse_catalog_with_stock() -> dict:
+    """
+    Returns product catalog merged with live stock levels.
+    Structure: { material: { category: [ {product + stock fields} ] } }
+    """
+    catalog = get_product_catalog()
+    levels  = get_warehouse_stock_levels()
+
+    result = {}
+    for mat, cats in catalog.items():
+        for cat, products in cats.items():
+            for p in products:
+                pid = p["product_id"]
+                stock = levels.get(pid, {})
+                entry = {
+                    **p,
+                    "qty":     stock.get("qty", 0.0),
+                    "unit":    stock.get("unit", "Pcs"),
+                    "is_hero": stock.get("is_hero", False),
+                }
+                result.setdefault(mat, {}).setdefault(cat, []).append(entry)
+
+    # Also include items in stock that aren't in the products catalog
+    for pid, stock in levels.items():
+        mat = stock.get("material") or "Other"
+        cat = stock.get("category") or "Miscellaneous"
+        # Check if already added
+        existing = result.get(mat, {}).get(cat, [])
+        if not any(e["product_id"] == pid for e in existing):
+            result.setdefault(mat, {}).setdefault(cat, []).append(stock)
+
+    return result
+
+
+def toggle_warehouse_hero(product_id: str, is_hero: bool) -> bool:
+    try:
+        encoded = requests.utils.quote(product_id, safe="")
+        r = requests.patch(
+            f"{url}/rest/v1/warehouse_stock?product_id=eq.{encoded}",
+            json={"is_hero": is_hero},
+            headers=_headers()
+        )
+        return r.ok
+    except Exception as e:
+        print(f"❌ Toggle hero error: {e}")
+        return False
+
+
+def delete_warehouse_entry(entry_id: str) -> bool:
+    try:
+        r = requests.delete(
+            f"{url}/rest/v1/warehouse_stock?id=eq.{entry_id}",
+            headers=_headers()
+        )
+        return r.ok
+    except Exception as e:
+        print(f"❌ Delete warehouse entry error: {e}")
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# OFFICE STOCK
+# Table: office_stock
+#   id (uuid), item_name (text), material (text), category (text),
+#   type (text: 'IN'|'OUT'), qty (numeric), unit (text),
+#   rate (numeric), entry_date (date), remarks (text),
+#   is_hero (bool), created_at (timestamptz)
+# ═══════════════════════════════════════════════════════════════════
+
+def add_office_entry(entry: dict) -> bool:
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/office_stock",
+            json=entry,
+            headers={**_headers(), "Prefer": "return=minimal"}
+        )
+        if not r.ok:
+            print(f"❌ Office entry failed {r.status_code}: {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ Office entry error: {e}")
+        return False
+
+
+def get_office_entries(item_key: str = None) -> list:
+    if item_key:
+        encoded_mat = requests.utils.quote(item_key.split("||")[0], safe="")
+        encoded_cat = requests.utils.quote(item_key.split("||")[1] if "||" in item_key else "", safe="")
+        return _get(
+            f"{url}/rest/v1/office_stock"
+            f"?material=eq.{encoded_mat}&category=eq.{encoded_cat}"
+            f"&select=*&order=entry_date.desc,created_at.desc"
+        )
+    return _get(f"{url}/rest/v1/office_stock?select=*&order=entry_date.desc,created_at.desc")
+
+
+def get_office_stock_levels() -> dict:
+    """
+    Returns current stock level per (material, category, item_name).
+    key = f"{material}||{category}||{item_name}"
+    """
+    rows = _get(f"{url}/rest/v1/office_stock?select=*&order=entry_date.asc")
+    levels = {}
+    for row in rows:
+        item_name = row.get("item_name", "")
+        mat       = row.get("material", "General")
+        cat       = row.get("category", "Miscellaneous")
+        key       = f"{mat}||{cat}||{item_name}"
+        if key not in levels:
+            levels[key] = {
+                "item_name": item_name,
+                "material":  mat,
+                "category":  cat,
+                "qty":       0.0,
+                "unit":      row.get("unit", "Pcs"),
+                "is_hero":   row.get("is_hero", False),
+            }
+        delta = float(row.get("qty") or 0)
+        if row.get("type") == "IN":
+            levels[key]["qty"] += delta
+        else:
+            levels[key]["qty"] -= delta
+        if row.get("is_hero"):
+            levels[key]["is_hero"] = True
+    return levels
+
+
+def get_office_catalog_with_stock() -> dict:
+    """
+    Returns office stock as a nested dict:
+    { material: { category: [ { item_name, qty, unit, is_hero } ] } }
+    """
+    levels = get_office_stock_levels()
+    result = {}
+    for key, stock in levels.items():
+        mat = stock.get("material", "General")
+        cat = stock.get("category", "Miscellaneous")
+        result.setdefault(mat, {}).setdefault(cat, []).append(stock)
+    return result
+
+
+def toggle_office_hero(item_name: str, material: str, category: str, is_hero: bool) -> bool:
+    try:
+        enc_item = requests.utils.quote(item_name, safe="")
+        enc_mat  = requests.utils.quote(material, safe="")
+        enc_cat  = requests.utils.quote(category, safe="")
+        r = requests.patch(
+            f"{url}/rest/v1/office_stock"
+            f"?item_name=eq.{enc_item}&material=eq.{enc_mat}&category=eq.{enc_cat}",
+            json={"is_hero": is_hero},
+            headers=_headers()
+        )
+        return r.ok
+    except Exception as e:
+        print(f"❌ Toggle office hero error: {e}")
+        return False
+
+
+def delete_office_entry(entry_id: str) -> bool:
+    try:
+        r = requests.delete(
+            f"{url}/rest/v1/office_stock?id=eq.{entry_id}",
+            headers=_headers()
+        )
+        return r.ok
+    except Exception as e:
+        print(f"❌ Delete office entry error: {e}")
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TRANSACTIONS — combined view of warehouse + office movements
+# ═══════════════════════════════════════════════════════════════════
+
+def get_all_transactions(limit: int = 200) -> list:
+    """
+    Returns combined warehouse + office stock movements, sorted by date desc.
+    Each row has: source, type, item_name/product_name, material, category,
+                  qty, unit, rate, entry_date, remarks, is_hero
+    """
+    w_rows = _get(
+        f"{url}/rest/v1/warehouse_stock"
+        f"?select=id,product_id,product_name,material,category,type,qty,unit,rate,entry_date,remarks,is_hero,created_at"
+        f"&order=entry_date.desc,created_at.desc&limit={limit}"
+    )
+    o_rows = _get(
+        f"{url}/rest/v1/office_stock"
+        f"?select=id,item_name,material,category,type,qty,unit,rate,entry_date,remarks,is_hero,created_at"
+        f"&order=entry_date.desc,created_at.desc&limit={limit}"
+    )
+
+    transactions = []
+    for r in w_rows:
+        transactions.append({
+            "id":           r.get("id"),
+            "source":       "Warehouse",
+            "product_name": r.get("product_name", r.get("product_id", "")),
+            "material":     r.get("material", ""),
+            "category":     r.get("category", ""),
+            "type":         r.get("type", ""),
+            "qty":          r.get("qty", 0),
+            "unit":         r.get("unit", ""),
+            "rate":         r.get("rate", 0),
+            "entry_date":   r.get("entry_date", ""),
+            "remarks":      r.get("remarks", ""),
+            "created_at":   r.get("created_at", ""),
+        })
+    for r in o_rows:
+        transactions.append({
+            "id":           r.get("id"),
+            "source":       "Office",
+            "product_name": r.get("item_name", ""),
+            "material":     r.get("material", ""),
+            "category":     r.get("category", ""),
+            "type":         r.get("type", ""),
+            "qty":          r.get("qty", 0),
+            "unit":         r.get("unit", ""),
+            "rate":         r.get("rate", 0),
+            "entry_date":   r.get("entry_date", ""),
+            "remarks":      r.get("remarks", ""),
+            "created_at":   r.get("created_at", ""),
+        })
+
+    transactions.sort(key=lambda x: (x.get("entry_date") or "", x.get("created_at") or ""), reverse=True)
+    return transactions[:limit]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DASHBOARD ANALYTICS
+# ═══════════════════════════════════════════════════════════════════
+
+def get_dashboard_analytics() -> dict:
+    """
+    Returns all data needed for the dashboard:
+    - enquiry counts (today, this week, total)
+    - revenue stats from quotes
+    - warehouse stock summary (top items, hero, dead)
+    - office stock summary (hero, dead)
+    """
+    from datetime import date, timedelta
+    today = date.today().isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+    month_ago = (date.today() - timedelta(days=30)).isoformat()
+
+    # Enquiries
+    all_enquiries = list_all()
+    today_enq   = [e for e in all_enquiries if (e.get("received_at") or "")[:10] == today]
+    week_enq    = [e for e in all_enquiries if (e.get("received_at") or "")[:10] >= week_ago]
+    pending_enq = [e for e in all_enquiries if e.get("status") == "PENDING"]
+
+    # Revenue from quotes
+    all_sent = list_sent()
+    total_revenue = sum(
+        float((q.get("quotes") or [{}])[0].get("grand_total") or 0)
+        for q in all_sent if q.get("quotes")
+    )
+
+    # Warehouse stock levels
+    w_levels = get_warehouse_stock_levels()
+    w_hero   = [v for v in w_levels.values() if v.get("is_hero")]
+    w_dead   = [v for v in w_levels.values() if v.get("qty", 0) <= 0]
+    w_low    = [v for v in w_levels.values() if 0 < v.get("qty", 0) <= 10]
+    w_ok     = [v for v in w_levels.values() if v.get("qty", 0) > 10]
+
+    # Top 8 warehouse items by qty
+    w_top = sorted(w_levels.values(), key=lambda x: x.get("qty", 0), reverse=True)[:8]
+
+    # Office stock levels
+    o_levels = get_office_stock_levels()
+    o_hero   = [v for v in o_levels.values() if v.get("is_hero")]
+    o_dead   = [v for v in o_levels.values() if v.get("qty", 0) <= 0]
+    o_low    = [v for v in o_levels.values() if 0 < v.get("qty", 0) <= 5]
+
+    # Recent transactions (last 30 days) for sparkline
+    all_tx = get_all_transactions(limit=500)
+    recent_tx = [t for t in all_tx if (t.get("entry_date") or "") >= month_ago]
+
+    return {
+        "enquiries": {
+            "today":   len(today_enq),
+            "week":    len(week_enq),
+            "total":   len(all_enquiries),
+            "pending": len(pending_enq),
+        },
+        "revenue": {
+            "total": round(total_revenue, 2),
+            "quotes_sent": len(all_sent),
+        },
+        "warehouse": {
+            "total_skus": len(w_levels),
+            "ok":         len(w_ok),
+            "low":        len(w_low),
+            "dead":       len(w_dead),
+            "hero":       w_hero,
+            "top_items":  w_top,
+        },
+        "office": {
+            "total_skus": len(o_levels),
+            "low":        len(o_low),
+            "dead":       len(o_dead),
+            "hero":       o_hero,
+            "by_category": _group_by_category(o_levels),
+        },
+        "recent_transactions": recent_tx[:50],
+    }
+
+
+def _group_by_category(levels: dict) -> list:
+    cats = {}
+    for v in levels.values():
+        cat = v.get("category", "Other")
+        cats[cat] = cats.get(cat, 0) + 1
+    return [{"category": k, "count": v} for k, v in sorted(cats.items(), key=lambda x: -x[1])]
